@@ -1,12 +1,11 @@
-use iced::{Subscription, Task};
+use iced::{Element, Subscription, Task};
 
-type Element<'a, T> = iced::Element<'a, T, iced::Theme, Renderer>;
-type Renderer = renderer::Renderer<iced::Renderer>;
+// type Element<'a, T> = iced::Element<'a, T, iced::Theme, Renderer>;
+// type Renderer = renderer::Renderer<iced::Renderer>;
 
 pub type IceResult = iced::Result;
 
 pub mod editor;
-pub mod renderer;
 
 pub fn launch() -> IceResult {
     // todo!()

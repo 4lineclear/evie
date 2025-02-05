@@ -3,22 +3,27 @@ use std::{cell::RefCell, ops::DerefMut, time::Instant};
 
 use iced::{
     advanced::{
-        layout, mouse,
+        layout, mouse, renderer,
         text::{self, highlighter, Editor as _},
+        widget::operation,
         Widget,
     },
     widget::{
         text::{LineHeight, Wrapping},
         text_editor,
     },
-    Length, Padding, Pixels, Size,
+    Font, Length, Padding, Pixels, Point, Renderer, Size,
 };
-use iced_renderer::core::SmolStr;
+use iced_renderer::core::{widget, SmolStr};
 use ropey::Rope;
 
 use crate::Message;
 
-pub fn evie_editor<'a, Theme>() -> TextEditor<'a, highlighter::PlainText, Theme, super::Renderer>
+use self::internal::Editor;
+
+mod internal;
+
+pub fn evie_editor<'a, Theme>() -> TextEditor<'a, highlighter::PlainText, Theme>
 where
     Theme: text_editor::Catalog,
 {
@@ -26,14 +31,14 @@ where
 }
 
 #[derive(Debug)]
-pub struct TextEditor<'a, Highlighter, Theme = iced::Theme, Renderer = crate::Renderer>
+pub struct TextEditor<'a, Highlighter, Theme = iced::Theme>
 where
     Highlighter: text::Highlighter,
     Theme: text_editor::Catalog,
     Renderer: text::Renderer,
 {
     editor: Editor,
-    font: Option<Renderer::Font>,
+    font: Option<Font>,
     text_size: Option<Pixels>,
     line_height: LineHeight,
     width: Length,
@@ -44,13 +49,12 @@ where
     key_binding: Option<Box<dyn KeyBinding + 'a>>,
     on_edit: Option<Box<dyn OnEdit + 'a>>,
     highlighter_settings: Highlighter::Settings,
-    highlighter_format: fn(&Highlighter::Highlight, &Theme) -> highlighter::Format<Renderer::Font>,
+    highlighter_format: fn(&Highlighter::Highlight, &Theme) -> highlighter::Format<Font>,
 }
 
-impl<'a, Theme, Renderer> Default for TextEditor<'a, highlighter::PlainText, Theme, Renderer>
+impl<'a, Theme> Default for TextEditor<'a, highlighter::PlainText, Theme>
 where
     Theme: text_editor::Catalog,
-    Renderer: text::Renderer,
 {
     fn default() -> Self {
         Self {
@@ -67,18 +71,8 @@ where
             on_edit: None,
             highlighter_settings: (),
             highlighter_format: |_, _| highlighter::Format::default(),
-            // width: Length::Fill,
-            // height: Length::Shrink,
-            // on_edit: None,
-            // editor: Editor::default(),
-            // font: None,
         }
     }
-}
-
-#[derive(Debug, Default)]
-pub struct Editor {
-    rope: Rope,
 }
 
 #[derive(Debug)]
@@ -86,11 +80,10 @@ pub enum Action {
     Char(SmolStr),
 }
 
-impl<'a, Highlighter, Theme, Renderer> TextEditor<'a, Highlighter, Theme, Renderer>
+impl<'a, Highlighter, Theme> TextEditor<'a, Highlighter, Theme>
 where
     Highlighter: text::Highlighter,
     Theme: text_editor::Catalog,
-    Renderer: text::Renderer,
 {
     fn apply_key(
         &mut self,
@@ -111,12 +104,10 @@ where
     }
 }
 
-impl<'a, Highlighter, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for TextEditor<'a, Highlighter, Theme, Renderer>
+impl<'a, Highlighter, Theme> Widget<Message, Theme, Renderer> for TextEditor<'a, Highlighter, Theme>
 where
     Highlighter: text::Highlighter,
     Theme: text_editor::Catalog,
-    Renderer: text::Renderer<Editor = Editor, Font = iced::Font>,
 {
     fn size(&self) -> Size<Length> {
         Size {
@@ -131,50 +122,7 @@ where
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        // let mut internal = self.content.0.borrow_mut();
-        let state = tree.state.downcast_mut::<State<Highlighter>>();
-
-        if state.highlighter_format_address != self.highlighter_format as usize {
-            state.highlighter.borrow_mut().change_line(0);
-
-            state.highlighter_format_address = self.highlighter_format as usize;
-        }
-
-        if state.highlighter_settings != self.highlighter_settings {
-            state
-                .highlighter
-                .borrow_mut()
-                .update(&self.highlighter_settings);
-
-            state.highlighter_settings = self.highlighter_settings.clone();
-        }
-
-        let limits = limits.width(self.width).height(self.height);
-
-        self.editor.update(
-            limits.shrink(self.padding).max(),
-            self.font.unwrap_or_else(|| renderer.default_font()),
-            self.text_size.unwrap_or_else(|| renderer.default_size()),
-            self.line_height,
-            self.wrapping,
-            state.highlighter.borrow_mut().deref_mut(),
-        );
-
-        match self.height {
-            Length::Fill | Length::FillPortion(_) | Length::Fixed(_) => {
-                layout::Node::new(limits.max())
-            }
-            Length::Shrink => {
-                let min_bounds = self.editor.min_bounds();
-
-                layout::Node::new(
-                    limits
-                        .height(min_bounds.height)
-                        .max()
-                        .expand(Size::new(0.0, self.padding.vertical())),
-                )
-            }
-        }
+        todo!()
     }
 
     fn draw(
@@ -187,37 +135,156 @@ where
         cursor: iced::advanced::mouse::Cursor,
         viewport: &iced::Rectangle,
     ) {
-        todo!()
+        use iced::advanced::text::Renderer as _;
+        use iced::advanced::Renderer as _;
+        use iced::widget::text_editor::Status;
+
+        let bounds = layout.bounds();
+
+        let internal = &self.editor;
+        let state = tree.state.downcast_ref::<State<Highlighter>>();
+
+        let font = self.font.unwrap_or_else(|| renderer.default_font());
+
+        // internal.editor.highlight(
+        //     font,
+        //     state.highlighter.borrow_mut().deref_mut(),
+        //     |highlight| (self.highlighter_format)(highlight, theme),
+        // );
+
+        let is_disabled = self.on_edit.is_none();
+        let is_mouse_over = cursor.is_over(bounds);
+
+        let status = if is_disabled {
+            Status::Disabled
+        } else if state.focus.is_some() {
+            Status::Focused
+        } else if is_mouse_over {
+            Status::Hovered
+        } else {
+            Status::Active
+        };
+
+        let style = theme.style(&self.class, status);
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds,
+                border: style.border,
+                ..renderer::Quad::default()
+            },
+            style.background,
+        );
+
+        let text_bounds = bounds.shrink(self.padding);
+
+        // if internal.editor.is_empty() {
+        //     if let Some(placeholder) = self.placeholder.clone() {
+        //         renderer.fill_text(
+        //             Text {
+        //                 content: placeholder.into_owned(),
+        //                 bounds: text_bounds.size(),
+        //                 size: self.text_size.unwrap_or_else(|| renderer.default_size()),
+        //                 line_height: self.line_height,
+        //                 font,
+        //                 horizontal_alignment: alignment::Horizontal::Left,
+        //                 vertical_alignment: alignment::Vertical::Top,
+        //                 shaping: text::Shaping::Advanced,
+        //                 wrapping: self.wrapping,
+        //             },
+        //             text_bounds.position(),
+        //             style.placeholder,
+        //             text_bounds,
+        //         );
+        //     }
+        // } else {
+        //     renderer.fill_editor(
+        //         &internal.editor,
+        //         text_bounds.position(),
+        //         style.value,
+        //         text_bounds,
+        //     );
+        // }
+
+        let translation = text_bounds.position() - Point::ORIGIN;
+
+        let Some(focus) = state.focus.as_ref() else {
+            return;
+        };
+        // match internal.editor.cursor() {
+        //     Cursor::Caret(position) if focus.is_cursor_visible() => {
+        //         let cursor = Rectangle::new(
+        //             position + translation,
+        //             Size::new(
+        //                 1.0,
+        //                 self.line_height
+        //                     .to_absolute(
+        //                         self.text_size.unwrap_or_else(|| renderer.default_size()),
+        //                     )
+        //                     .into(),
+        //             ),
+        //         );
+        //
+        //         if let Some(clipped_cursor) = text_bounds.intersection(&cursor) {
+        //             renderer.fill_quad(
+        //                 renderer::Quad {
+        //                     bounds: clipped_cursor,
+        //                     ..renderer::Quad::default()
+        //                 },
+        //                 style.value,
+        //             );
+        //         }
+        //     }
+        //     Cursor::Selection(ranges) => {
+        //         for range in ranges
+        //             .into_iter()
+        //             .filter_map(|range| text_bounds.intersection(&(range + translation)))
+        //         {
+        //             renderer.fill_quad(
+        //                 renderer::Quad {
+        //                     bounds: range,
+        //                     ..renderer::Quad::default()
+        //                 },
+        //                 style.selection,
+        //             );
+        //         }
+        //     }
+        //     Cursor::Caret(_) => {}
+        // }
     }
 
-    fn size_hint(&self) -> Size<Length> {
-        Size {
-            width: self.width,
-            height: self.height,
-        }
+    fn tag(&self) -> widget::tree::Tag {
+        widget::tree::Tag::of::<State<Highlighter>>()
     }
 
-    fn tag(&self) -> iced::advanced::widget::tree::Tag {
-        iced::advanced::widget::tree::Tag::stateless()
+    fn state(&self) -> widget::tree::State {
+        widget::tree::State::new(State {
+            focus: None,
+            last_click: None,
+            drag_click: None,
+            partial_scroll: 0.0,
+            highlighter: RefCell::new(Highlighter::new(&self.highlighter_settings)),
+            highlighter_settings: self.highlighter_settings.clone(),
+            highlighter_format_address: self.highlighter_format as usize,
+        })
     }
 
-    fn state(&self) -> iced::advanced::widget::tree::State {
-        iced::advanced::widget::tree::State::None
-    }
+    // fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+    //     Vec::new()
+    // }
 
-    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
-        Vec::new()
-    }
-
-    fn diff(&self, _tree: &mut iced::advanced::widget::Tree) {}
+    // fn diff(&self, _tree: &mut iced::advanced::widget::Tree) {}
 
     fn operate(
         &self,
-        _state: &mut iced::advanced::widget::Tree,
+        tree: &mut iced::advanced::widget::Tree,
         _layout: iced::advanced::Layout<'_>,
         _renderer: &Renderer,
-        _operation: &mut dyn iced::advanced::widget::Operation,
+        operation: &mut dyn iced::advanced::widget::Operation,
     ) {
+        let state = tree.state.downcast_mut::<State<Highlighter>>();
+
+        operation.focusable(state, None);
     }
 
     fn on_event(
@@ -237,103 +304,34 @@ where
     fn mouse_interaction(
         &self,
         _state: &iced::advanced::widget::Tree,
-        _layout: iced::advanced::Layout<'_>,
-        _cursor: iced::advanced::mouse::Cursor,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
         _viewport: &iced::Rectangle,
         _renderer: &Renderer,
     ) -> iced::advanced::mouse::Interaction {
-        iced::advanced::mouse::Interaction::None
+        let is_disabled = self.on_edit.is_none();
+
+        if cursor.is_over(layout.bounds()) {
+            if is_disabled {
+                mouse::Interaction::NotAllowed
+            } else {
+                mouse::Interaction::Text
+            }
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
-    fn overlay<'b>(
-        &'b mut self,
-        _state: &'b mut iced::advanced::widget::Tree,
-        _layout: iced::advanced::Layout<'_>,
-        _renderer: &Renderer,
-        _translation: iced::Vector,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
-        None
-    }
+    // fn overlay<'b>(
+    //     &'b mut self,
+    //     _state: &'b mut iced::advanced::widget::Tree,
+    //     _layout: iced::advanced::Layout<'_>,
+    //     _renderer: &Renderer,
+    //     _translation: iced::Vector,
+    // ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+    //     None
+    // }
 }
-
-impl iced::advanced::text::Editor for Editor {
-    type Font = iced::Font;
-
-    fn with_text(text: &str) -> Self {
-        todo!()
-    }
-
-    fn is_empty(&self) -> bool {
-        todo!()
-    }
-
-    fn cursor(&self) -> text::editor::Cursor {
-        todo!()
-    }
-
-    fn cursor_position(&self) -> (usize, usize) {
-        todo!()
-    }
-
-    fn selection(&self) -> Option<String> {
-        todo!()
-    }
-
-    fn line(&self, index: usize) -> Option<&str> {
-        todo!()
-    }
-
-    fn line_count(&self) -> usize {
-        todo!()
-    }
-
-    fn perform(&mut self, action: text_editor::Action) {
-        todo!()
-    }
-
-    fn bounds(&self) -> Size {
-        todo!()
-    }
-
-    fn min_bounds(&self) -> Size {
-        todo!()
-    }
-
-    fn update(
-        &mut self,
-        new_bounds: Size,
-        new_font: Self::Font,
-        new_size: Pixels,
-        new_line_height: LineHeight,
-        new_wrapping: Wrapping,
-        new_highlighter: &mut impl text::Highlighter,
-    ) {
-        todo!()
-    }
-
-    fn highlight<H: text::Highlighter>(
-        &mut self,
-        font: Self::Font,
-        highlighter: &mut H,
-        format_highlight: impl Fn(&H::Highlight) -> highlighter::Format<Self::Font>,
-    ) {
-        todo!()
-    }
-}
-
-trait KeyBinding:
-    Fn(text_editor::KeyPress) -> Option<text_editor::Binding<Message>> + std::fmt::Debug
-{
-}
-
-impl<KB: Fn(text_editor::KeyPress) -> Option<text_editor::Binding<Message>> + std::fmt::Debug>
-    KeyBinding for KB
-{
-}
-
-trait OnEdit: Fn(Action) -> Message + std::fmt::Debug {}
-
-impl<E: Fn(Action) -> Message + std::fmt::Debug> OnEdit for E {}
 
 /// The state of a [`TextEditor`].
 #[derive(Debug)]
@@ -371,5 +369,33 @@ impl Focus {
         self.is_window_focused
             && ((self.now - self.updated_at).as_millis() / Self::CURSOR_BLINK_INTERVAL_MILLIS) % 2
                 == 0
+    }
+}
+
+trait KeyBinding:
+    Fn(text_editor::KeyPress) -> Option<text_editor::Binding<Message>> + std::fmt::Debug
+{
+}
+
+impl<KB: Fn(text_editor::KeyPress) -> Option<text_editor::Binding<Message>> + std::fmt::Debug>
+    KeyBinding for KB
+{
+}
+
+trait OnEdit: Fn(Action) -> Message + std::fmt::Debug {}
+
+impl<E: Fn(Action) -> Message + std::fmt::Debug> OnEdit for E {}
+
+impl<Highlighter: text::Highlighter> operation::Focusable for State<Highlighter> {
+    fn is_focused(&self) -> bool {
+        self.focus.is_some()
+    }
+
+    fn focus(&mut self) {
+        self.focus = Some(Focus::now());
+    }
+
+    fn unfocus(&mut self) {
+        self.focus = None;
     }
 }
