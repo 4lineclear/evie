@@ -1,3 +1,4 @@
+use iced::Size;
 use ropey::Rope;
 
 #[derive(Debug, Default)]
@@ -10,5 +11,8 @@ impl Editor {
         Self {
             rope: Rope::from_str(text),
         }
+    }
+    pub fn get_inner(&self) -> String {
+        self.rope.chunks().collect()
     }
 }

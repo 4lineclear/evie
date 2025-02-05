@@ -6,8 +6,9 @@ use iced::{
         layout, mouse, renderer,
         text::{self, highlighter, Editor as _},
         widget::operation,
-        Widget,
+        Text, Widget,
     },
+    alignment,
     widget::{
         text::{LineHeight, Wrapping},
         text_editor,
@@ -122,7 +123,36 @@ where
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        todo!()
+        let mut internal = &self.editor;
+        let state = tree.state.downcast_mut::<State<Highlighter>>();
+
+        if state.highlighter_format_address != self.highlighter_format as usize {
+            state.highlighter.borrow_mut().change_line(0);
+
+            state.highlighter_format_address = self.highlighter_format as usize;
+        }
+
+        if state.highlighter_settings != self.highlighter_settings {
+            state
+                .highlighter
+                .borrow_mut()
+                .update(&self.highlighter_settings);
+
+            state.highlighter_settings = self.highlighter_settings.clone();
+        }
+
+        let limits = limits.width(self.width).height(self.height);
+
+        // internal.editor.update(
+        //     limits.shrink(self.padding).max(),
+        //     self.font.unwrap_or_else(|| renderer.default_font()),
+        //     self.text_size.unwrap_or_else(|| renderer.default_size()),
+        //     self.line_height,
+        //     self.wrapping,
+        //     state.highlighter.borrow_mut().deref_mut(),
+        // );
+
+        layout::Node::new(limits.max())
     }
 
     fn draw(
@@ -135,9 +165,10 @@ where
         cursor: iced::advanced::mouse::Cursor,
         viewport: &iced::Rectangle,
     ) {
-        use iced::advanced::text::Renderer as _;
-        use iced::advanced::Renderer as _;
-        use iced::widget::text_editor::Status;
+        use iced::{
+            advanced::{text::Renderer as _, Renderer as _},
+            widget::text_editor::Status,
+        };
 
         let bounds = layout.bounds();
 
@@ -178,33 +209,22 @@ where
 
         let text_bounds = bounds.shrink(self.padding);
 
-        // if internal.editor.is_empty() {
-        //     if let Some(placeholder) = self.placeholder.clone() {
-        //         renderer.fill_text(
-        //             Text {
-        //                 content: placeholder.into_owned(),
-        //                 bounds: text_bounds.size(),
-        //                 size: self.text_size.unwrap_or_else(|| renderer.default_size()),
-        //                 line_height: self.line_height,
-        //                 font,
-        //                 horizontal_alignment: alignment::Horizontal::Left,
-        //                 vertical_alignment: alignment::Vertical::Top,
-        //                 shaping: text::Shaping::Advanced,
-        //                 wrapping: self.wrapping,
-        //             },
-        //             text_bounds.position(),
-        //             style.placeholder,
-        //             text_bounds,
-        //         );
-        //     }
-        // } else {
-        //     renderer.fill_editor(
-        //         &internal.editor,
-        //         text_bounds.position(),
-        //         style.value,
-        //         text_bounds,
-        //     );
-        // }
+        renderer.fill_text(
+            Text {
+                content: internal.get_inner(),
+                bounds: text_bounds.size(),
+                size: self.text_size.unwrap_or_else(|| renderer.default_size()),
+                line_height: self.line_height,
+                font,
+                horizontal_alignment: alignment::Horizontal::Left,
+                vertical_alignment: alignment::Vertical::Top,
+                shaping: text::Shaping::Advanced,
+                wrapping: self.wrapping,
+            },
+            text_bounds.position(),
+            style.value,
+            text_bounds,
+        );
 
         let translation = text_bounds.position() - Point::ORIGIN;
 
@@ -269,12 +289,6 @@ where
         })
     }
 
-    // fn children(&self) -> Vec<iced::advanced::widget::Tree> {
-    //     Vec::new()
-    // }
-
-    // fn diff(&self, _tree: &mut iced::advanced::widget::Tree) {}
-
     fn operate(
         &self,
         tree: &mut iced::advanced::widget::Tree,
@@ -321,16 +335,6 @@ where
             mouse::Interaction::default()
         }
     }
-
-    // fn overlay<'b>(
-    //     &'b mut self,
-    //     _state: &'b mut iced::advanced::widget::Tree,
-    //     _layout: iced::advanced::Layout<'_>,
-    //     _renderer: &Renderer,
-    //     _translation: iced::Vector,
-    // ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
-    //     None
-    // }
 }
 
 /// The state of a [`TextEditor`].

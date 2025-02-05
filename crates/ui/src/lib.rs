@@ -21,7 +21,7 @@ struct EvieMain {
 }
 
 #[derive(Debug, Clone)]
-enum Message {
+pub enum Message {
     Idle,
 }
 
