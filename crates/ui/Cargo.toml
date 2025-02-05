@@ -1,0 +1,13 @@
+[package]
+name = "evie-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+iced = { version = "0.13", features = ["advanced"] }
+iced_renderer = "0.13"
+rfd = "0.15"
+ropey = { workspace = true }
+tokio = { version = "1.43", features = ["fs"] }
+
+evie-core = { path = "../core/" }
