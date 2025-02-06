@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 arc-swap = "1.7"
-dashmap = "6.1"
+dashmap = { workspace = true }
 ropey = { workspace = true }
 thiserror = "2.0"
 tokio = { workspace = true }

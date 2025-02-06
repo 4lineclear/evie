@@ -1,7 +1,8 @@
 use std::io;
 use std::{ops::Range, path::PathBuf};
 
-use crate::engine::{Command, Edit};
+use crate::engine::{Edit, EngineResult};
+use crate::BufferAction;
 
 use ropey::Rope;
 
@@ -17,41 +18,38 @@ pub struct Buffer {
 
 #[derive(Debug, Default)]
 pub struct Location {
-    pub line: usize,
-    pub cursor: usize,
-    pub file: std::path::PathBuf,
+    pub char: usize,
 }
 
 impl Buffer {
-    pub fn edit(&mut self, edit: Edit<Command>) -> ropey::Result<()> {
+    pub fn edit(&mut self, edit: Edit<BufferAction>) -> EngineResult<()> {
         match edit {
             Edit::One(cmd) => self.apply(cmd),
             Edit::Multi(vec) => vec.into_iter().try_for_each(|cmd| self.apply(cmd)),
         }
     }
 
-    pub fn apply(&mut self, cmd: Command) -> ropey::Result<()> {
-        match cmd {
-            Command::Replace(r) => {
-                let range = self.fix_range(r.range)?;
-                let char_idx = range.start;
-                self.remove(range)?;
-                self.text.try_insert(char_idx, r.new_text)?;
+    pub fn apply(&mut self, action: BufferAction) -> EngineResult<()> {
+        match action {
+            BufferAction::Append(text) => {
+                self.text
+                    .try_insert(self.fix_index(self.loc.char)?, &text)?;
+                self.loc.char += text.len();
+                Ok(())
             }
-            Command::Delete(d) => self.remove(self.fix_range(d.range)?)?,
-            Command::Insert(r) => self.text.try_insert(self.fix_index(r.index)?, r.text)?,
         }
-        Ok(())
     }
 
     fn fix_index(&self, i: usize) -> ropey::Result<usize> {
         self.text.try_byte_to_char(i)
     }
 
+    #[allow(unused)]
     fn fix_range(&self, r: Range<usize>) -> ropey::Result<Range<usize>> {
         Ok(self.fix_index(r.start)?..self.fix_index(r.end)?)
     }
 
+    #[allow(unused)]
     fn remove(&mut self, r: Range<usize>) -> ropey::Result<()> {
         self.text.try_remove(r.start..r.end)?;
         Ok(())

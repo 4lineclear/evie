@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+dashmap = { workspace = true }
 iced = { version = "0.13", features = ["advanced"] }
 iced_renderer = "0.13"
 rfd = "0.15"

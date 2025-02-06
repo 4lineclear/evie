@@ -1,58 +1,51 @@
-use iced::widget::text_editor::{Action, Edit};
-use iced::widget::{text_editor, text_editor::Content};
-use iced::Length::Fill;
-use iced::{Element, Subscription, Task};
+use evie_core::{Evie, EvieCentral};
+use iced::{widget::scrollable, Element, Task};
 
-// type Element<'a, T> = iced::Element<'a, T, iced::Theme, Renderer>;
-// type Renderer = renderer::Renderer<iced::Renderer>;
+use editor::evie_editor;
+use trigger::modes;
+
+pub mod editor;
+pub mod trigger;
 
 pub type IceResult = iced::Result;
 
 pub fn launch() -> IceResult {
-    // todo!()
     iced::application("Editor - Iced", EvieMain::update, EvieMain::view)
         //  .theme(EvieMain::theme);
         // .default_font(Font::MONOSPACE)
         .run_with(EvieMain::new)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct EvieMain {
-    // theme: highlighter::Theme,
-    content: Content,
+    inner: EvieCentral<KeyAction>, // content: Content,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Idle,
-    Action(Action),
 }
 
 impl EvieMain {
     fn new() -> (Self, Task<Message>) {
-        (
-            Self::default(),
-            // theme: highlighter::Theme::Base16Mocha,
-            // Task::none(),
-            iced::window::get_latest().and_then(|id| iced::window::maximize(id, true)),
-        )
+        let evie_main = Self {
+            inner: Evie::central(modes()),
+        };
+        let task = iced::window::get_latest().and_then(|id| iced::window::maximize(id, true));
+        (evie_main, task)
     }
 
-    fn update(&mut self, message: Message) -> Task<Message> {
-        if let Message::Action(action) = message {
-            self.content.perform(action);
-        }
+    fn update(&mut self, _message: Message) -> Task<Message> {
+        // if let Message::Action(_action) = message {}
         Task::none()
     }
     fn view(&self) -> Element<Message> {
-        // |a| {println!("{a:#?}");
-        // Message::Idle}
-        text_editor(&self.content)
-            .height(Fill)
-            .on_action(Message::Action)
-            .into()
+        self.inner.add_buffer("yeah.txt", true).unwrap();
+        scrollable(evie_editor(
+            self.inner.view_buffer("yeah.txt", true).unwrap(),
+        ))
+        .into()
     }
-
     // fn theme(&self) -> Theme {
     //     if self.theme.is_dark() {
     //         Theme::Dark
@@ -61,3 +54,12 @@ impl EvieMain {
     //     }
     // }
 }
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+pub enum KeyAction {
+    Letter(char),
+    Escape,
+    Enter,
+}
+
+impl evie_core::Key for KeyAction {}
