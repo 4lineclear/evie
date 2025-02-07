@@ -1,17 +1,20 @@
-use std::cell::{BorrowError, BorrowMutError, Cell};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    cell::{BorrowError, BorrowMutError, Cell},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use arc_swap::ArcSwap;
-use dashmap::DashMap;
 
 use engine::Engine;
 use thiserror::Error;
 
-use self::engine::{BufferPointer, EngineError};
+use engine::{BufferPointer, EngineError};
+use trigger::{Modes, Trigger, TriggerMap};
 
 pub mod buffer;
 pub mod engine;
+pub mod trigger;
 
 #[derive(Debug, Error)]
 pub enum EvieError {
@@ -109,16 +112,26 @@ impl<K: Key> BufferView<K> {
 
 impl<K: Key> Evie<K> {
     pub fn trigger(&self, key: K) -> Option<Action> {
-        match self.trig.load().get(&key) {
+        match self.do_trig(self.trig.load().get(&key)) {
+            Some(output) => output,
+            None => self.do_trig(self.mdata.universal.get(&key)).flatten(),
+        }
+    }
+    pub fn do_trig(&self, trig: Option<Trigger<K>>) -> Option<Option<Action>> {
+        match trig {
             Some(Trigger::End(a)) => {
                 self.trig.store(self.root());
-                return Some(a);
+                return Some(Some(a));
             }
-            Some(Trigger::Map(tm)) => self.trig.store(tm),
-            Some(Trigger::Fail) => self.trig.store(self.root()),
-            None => self.trig.store(self.root()),
+            Some(Trigger::Map(tm)) => {
+                self.trig.store(tm);
+                Some(None)
+            }
+            None => {
+                self.trig.store(self.root());
+                None
+            }
         }
-        None
     }
 
     pub fn change_mode(&self, mode: Mode) {
@@ -173,138 +186,6 @@ pub enum Move {
     Right,
     Up,
     Down,
-}
-
-pub type TriggerFallback<K> = Arc<dyn Fn(&K) -> Option<Trigger<K>>>;
-
-#[derive(Clone)]
-pub struct TriggerMap<K: Key> {
-    inner: DashMap<K, Trigger<K>>,
-    fallback: Option<TriggerFallback<K>>,
-}
-
-impl<K: Key + Default> Default for TriggerMap<K> {
-    fn default() -> Self {
-        Self {
-            inner: Default::default(),
-            fallback: None,
-        }
-    }
-}
-
-impl<K: Key + std::fmt::Debug> std::fmt::Debug for TriggerMap<K> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TriggerMap")
-            .field("inner", &self.inner)
-            .field("fallback", &self.fallback.as_ref().map(|_| ()))
-            .finish()
-    }
-}
-
-impl<K: Key> TriggerMap<K> {
-    pub fn with_fallback(self, fallback: TriggerFallback<K>) -> Self {
-        Self {
-            inner: self.inner,
-            fallback: Some(fallback),
-        }
-    }
-
-    pub fn new(
-        inner: impl IntoIterator<Item = (K, Trigger<K>)>,
-        fallback: Option<TriggerFallback<K>>,
-    ) -> Self {
-        let inner = inner.into_iter().collect();
-        Self { inner, fallback }
-    }
-
-    fn get(&self, key: &K) -> Option<Trigger<K>> {
-        match self.inner.get(key).map(|r| r.clone()) {
-            Some(trigger) => Some(trigger),
-            None => self
-                .fallback
-                .as_ref()
-                .and_then(|fallback: &TriggerFallback<K>| (fallback)(key)),
-        }
-    }
-}
-
-impl<K: Key, const N: usize> From<[(K, Trigger<K>); N]> for TriggerMap<K> {
-    fn from(value: [(K, Trigger<K>); N]) -> Self {
-        Self::new(value, None)
-    }
-}
-
-impl<K: Key> From<TriggerFallback<K>> for TriggerMap<K> {
-    fn from(value: TriggerFallback<K>) -> Self {
-        Self {
-            inner: Default::default(),
-            fallback: Some(value),
-        }
-    }
-}
-
-impl<K: Key, const N: usize> From<([(K, Trigger<K>); N], TriggerFallback<K>)> for TriggerMap<K> {
-    fn from(value: ([(K, Trigger<K>); N], TriggerFallback<K>)) -> Self {
-        Self::from(value.0).with_fallback(value.1)
-    }
-}
-
-#[derive(Clone, Default)]
-pub enum Trigger<K: Key> {
-    #[default]
-    Fail,
-    End(Action),
-    Map(Arc<TriggerMap<K>>),
-}
-
-impl<K: Key> std::fmt::Debug for Trigger<K> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Fail => write!(f, "Fail"),
-            Self::End(ac) => f.debug_tuple("End").field(ac).finish(),
-            Self::Map(tm) => f.debug_tuple("Map").field(tm).finish(),
-        }
-    }
-}
-
-impl<K: Key> From<Arc<TriggerMap<K>>> for Trigger<K> {
-    fn from(value: Arc<TriggerMap<K>>) -> Self {
-        Self::Map(value)
-    }
-}
-// TODO: consider adding micro-mods
-
-#[derive(Debug, Default)]
-pub struct Modes<K: Key> {
-    normal: Arc<TriggerMap<K>>,
-    insert: Arc<TriggerMap<K>>,
-    visual: Arc<TriggerMap<K>>,
-    command: Arc<TriggerMap<K>>,
-    replace: Arc<TriggerMap<K>>,
-    terminal: Arc<TriggerMap<K>>,
-    universal: Arc<TriggerMap<K>>,
-}
-
-impl<K: Key> Modes<K> {
-    pub fn new(
-        normal: impl Into<TriggerMap<K>>,
-        insert: impl Into<TriggerMap<K>>,
-        visual: impl Into<TriggerMap<K>>,
-        command: impl Into<TriggerMap<K>>,
-        replace: impl Into<TriggerMap<K>>,
-        terminal: impl Into<TriggerMap<K>>,
-        universal: impl Into<TriggerMap<K>>,
-    ) -> Self {
-        Self {
-            normal: normal.into().into(),
-            insert: insert.into().into(),
-            visual: visual.into().into(),
-            command: command.into().into(),
-            replace: replace.into().into(),
-            terminal: terminal.into().into(),
-            universal: universal.into().into(),
-        }
-    }
 }
 
 // TODO: consider making this a trait instead.

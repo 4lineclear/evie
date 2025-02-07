@@ -1,5 +1,4 @@
-use std::io;
-use std::{ops::Range, path::PathBuf};
+use std::{io, ops::Range, path::PathBuf};
 
 use crate::engine::{Edit, EngineResult};
 use crate::BufferAction;

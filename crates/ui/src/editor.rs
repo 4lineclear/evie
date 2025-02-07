@@ -1,10 +1,19 @@
+use std::cell::RefCell;
+
 use evie_core::BufferView;
+use iced::advanced::text::Paragraph as _;
+use iced::advanced::text::Renderer as _;
 use iced::advanced::widget::tree;
 use iced::advanced::{layout, text, Widget};
+use iced::advanced::{renderer, Renderer as _};
 use iced::keyboard::key;
-use iced::{alignment, Element, Length, Theme};
+use iced::widget;
+use iced::widget::text::{LineHeight, Shaping, Wrapping};
+use iced::Size;
+use iced::{alignment, Background, Border, Color, Element, Length, Padding, Pixels, Theme};
+use iced_renderer::graphics::text::Paragraph;
 
-use crate::{KeyAction, Message};
+use crate::{KeyAction, Message, Named, DEFAULT_FONT};
 
 pub fn evie_editor(bf: BufferView<KeyAction>) -> Editor {
     Editor::new(bf)
@@ -13,25 +22,73 @@ pub fn evie_editor(bf: BufferView<KeyAction>) -> Editor {
 #[derive(Debug)]
 pub struct Editor {
     bv: BufferView<KeyAction>,
+    // ed: iced::widget::TextEditor<>,
+    styling: Styling,
+}
+
+#[derive(Debug)]
+pub struct Styling {
     width: Length,
     height: Length,
+    font: Option<iced::Font>,
+    text_size: Option<Pixels>,
+    line_height: Option<LineHeight>,
+    padding: Padding,
+    wrapping: Wrapping,
+}
+
+impl Styling {
+    fn new() -> Self {
+        Self {
+            width: Length::Fill,
+            height: Length::Fill,
+            font: None,
+            text_size: None,
+            line_height: None,
+            padding: Padding::new(5.0),
+            wrapping: Wrapping::default(),
+        }
+    }
 }
 
 impl Editor {
     pub fn new(bv: BufferView<KeyAction>) -> Self {
         Self {
             bv,
-            width: Length::Fill,
-            height: Length::Shrink,
+            styling: Styling::new(),
         }
+    }
+
+    fn update_state(
+        &self,
+        renderer: &iced::Renderer,
+        state: &mut State,
+        styling: &Styling,
+        text_bounds: iced::Rectangle,
+    ) {
+        state.pg = Paragraph::with_text(text::Text {
+            content: &self.bv.rope().unwrap().chunks().collect::<String>(),
+            bounds: text_bounds.size(),
+            size: styling.text_size.unwrap_or_else(|| renderer.default_size()),
+            line_height: styling.line_height.unwrap_or_default(),
+            font: styling.font.unwrap_or(DEFAULT_FONT),
+            horizontal_alignment: alignment::Horizontal::Left,
+            vertical_alignment: alignment::Vertical::Top,
+            shaping: Shaping::Advanced,
+            wrapping: styling.wrapping,
+        });
+        // println!("{:#?}", state.pg.buffer());
     }
 }
 
-type EditorState = ();
+type EditorState = RefCell<State>;
 
-impl<Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer>
-    Widget<Message, Theme, Renderer> for Editor
-{
+#[derive(Debug, Default)]
+struct State {
+    pg: Paragraph,
+}
+
+impl Widget<Message, Theme, iced::Renderer> for Editor {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<tree::State>()
     }
@@ -40,65 +97,81 @@ impl<Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer>
     }
     fn size(&self) -> iced::Size<iced::Length> {
         iced::Size {
-            width: self.width,
-            height: self.height,
+            width: self.styling.width,
+            height: self.styling.height,
         }
     }
 
     fn layout(
         &self,
-        _tree: &mut iced::advanced::widget::Tree,
-        _renderer: &Renderer,
+        tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        // TODO: actually use dimensions
-        layout::Node::new(limits.max())
+        let limits = limits.width(self.styling.width).height(self.styling.height);
+        if let Length::Shrink = self.styling.height {
+            let state = tree.state.downcast_ref::<EditorState>().borrow();
+            let min_bounds = state.pg.min_bounds();
+            layout::Node::new(
+                limits
+                    .height(min_bounds.height)
+                    .max()
+                    .expand(Size::new(0.0, self.styling.padding.vertical())),
+            )
+        } else {
+            layout::Node::new(limits.max())
+        }
     }
 
     fn draw(
         &self,
         tree: &iced::advanced::widget::Tree,
-        renderer: &mut Renderer,
-        _theme: &Theme,
-        style: &iced::advanced::renderer::Style,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
         layout: iced::advanced::Layout<'_>,
         _cursor: iced::advanced::mouse::Cursor,
         _viewport: &iced::Rectangle,
     ) {
-        let bounds = layout.bounds();
-        let _state: EditorState = *tree.state.downcast_ref();
+        let mut state = tree.state.downcast_ref::<EditorState>().borrow_mut();
 
-        renderer.fill_text(
-            text::Text {
-                content: self.bv.rope().unwrap().chunks().collect(),
-                bounds: bounds.size(),
-                size: renderer.default_size(),
-                line_height: text::LineHeight::default(),
-                font: renderer.default_font(),
-                horizontal_alignment: alignment::Horizontal::Left,
-                vertical_alignment: alignment::Vertical::Top,
-                shaping: text::Shaping::Advanced,
-                wrapping: text::Wrapping::default(),
+        let bounds = layout.bounds();
+        let styling = &self.styling;
+        let style = default(&theme);
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds,
+                border: style.border,
+                ..renderer::Quad::default()
             },
-            bounds.position(),
-            style.text_color,
-            bounds,
+            style.background,
         );
+
+        let text_bounds = bounds.shrink(styling.padding);
+        self.update_state(renderer, &mut state, styling, text_bounds);
+        renderer.fill_paragraph(&state.pg, text_bounds.position(), style.value, text_bounds);
     }
 
     fn on_event(
         &mut self,
-        _state: &mut tree::Tree,
+        tree: &mut tree::Tree,
         event: iced::Event,
-        _layout: layout::Layout<'_>,
+        layout: layout::Layout<'_>,
         _cursor: iced::advanced::mouse::Cursor,
-        _renderer: &Renderer,
+        renderer: &iced::Renderer,
         _clipboard: &mut dyn iced::advanced::Clipboard,
         _shell: &mut iced::advanced::Shell<'_, Message>,
         _viewport: &iced::Rectangle,
     ) -> iced_renderer::core::event::Status {
         if let Some(ka) = decode_event(event) {
             if self.bv.on_key(ka).unwrap() {
+                self.update_state(
+                    renderer,
+                    &mut tree.state.downcast_ref::<EditorState>().borrow_mut(),
+                    &self.styling,
+                    layout.bounds().shrink(self.styling.padding),
+                );
                 return iced_renderer::core::event::Status::Captured;
             }
         }
@@ -119,12 +192,63 @@ fn decode_event(event: iced::Event) -> Option<KeyAction> {
     };
     match event {
         KeyPressed {
-            key: key::Key::Named(key::Named::Escape),
+            key: key::Key::Named(named),
             ..
-        } => Some(KeyAction::Escape),
+        } => Some(KeyAction::Named(Named::from_iced(named)?)),
         KeyPressed {
             text: Some(text), ..
         } => Some(KeyAction::Letter(text.chars().find(|c| !c.is_control())?)),
         _ => None,
     }
+}
+
+#[derive(Debug)]
+pub struct Style {
+    pub background: Background,
+    pub border: Border,
+    pub icon: Color,
+    pub placeholder: Color,
+    pub value: Color,
+    pub selection: Color,
+}
+
+/// The default style of a [`TextEditor`].
+pub fn default(theme: &Theme) -> Style {
+    let palette = theme.extended_palette();
+
+    Style {
+        background: Background::Color(palette.background.base.color),
+        border: Border {
+            radius: 2.0.into(),
+            width: 1.0,
+            color: palette.background.strong.color,
+        },
+        icon: palette.background.weak.text,
+        placeholder: palette.background.strong.color,
+        value: palette.background.base.text,
+        selection: palette.primary.weak.color,
+    }
+
+    // match status {
+    //     Status::Active => active,
+    //     Status::Hovered => Style {
+    //         border: Border {
+    //             color: palette.background.base.text,
+    //             ..active.border
+    //         },
+    //         ..active
+    //     },
+    //     Status::Focused => Style {
+    //         border: Border {
+    //             color: palette.primary.strong.color,
+    //             ..active.border
+    //         },
+    //         ..active
+    //     },
+    //     Status::Disabled => Style {
+    //         background: Background::Color(palette.background.weak.color),
+    //         value: active.placeholder,
+    //         ..active
+    //     },
+    // }
 }
